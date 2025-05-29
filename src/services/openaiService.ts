@@ -1,4 +1,3 @@
-
 export interface OpenAIRealtimeConfig {
   apiKey: string;
   model: string;
@@ -23,16 +22,10 @@ export class OpenAIRealtimeService {
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        this.ws = new WebSocket(
-          "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
-          [],
-          {
-            headers: {
-              "Authorization": `Bearer ${this.apiKey}`,
-              "OpenAI-Beta": "realtime=v1"
-            }
-          }
-        );
+        // Construct URL with API key as query parameter for browser compatibility
+        const wsUrl = `wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01`;
+        
+        this.ws = new WebSocket(wsUrl);
 
         this.ws.onopen = () => {
           console.log('Connected to OpenAI Realtime API');
@@ -66,7 +59,8 @@ export class OpenAIRealtimeService {
   private sendSessionUpdate() {
     if (!this.ws) return;
 
-    const sessionUpdate = {
+    // Send authentication first
+    const authMessage = {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
@@ -90,7 +84,14 @@ export class OpenAIRealtimeService {
       }
     };
 
-    this.ws.send(JSON.stringify(sessionUpdate));
+    // Add authorization header content to the session update
+    const messageWithAuth = {
+      ...authMessage,
+      authorization: `Bearer ${this.apiKey}`,
+      "openai-beta": "realtime=v1"
+    };
+
+    this.ws.send(JSON.stringify(messageWithAuth));
   }
 
   sendAudioData(audioData: ArrayBuffer) {
