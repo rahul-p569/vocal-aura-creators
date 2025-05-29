@@ -10,6 +10,7 @@ export class OpenAIRealtimeService {
   private ws: WebSocket | null = null;
   private apiKey: string;
   private config: OpenAIRealtimeConfig;
+  private audioContext: AudioContext | null = null;
   private onMessage: (message: any) => void = () => {};
   private onError: (error: any) => void = () => {};
   private onConnect: () => void = () => {};
@@ -20,21 +21,17 @@ export class OpenAIRealtimeService {
     this.config = config;
   }
 
-  connect(): Promise<void> {
+  async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        // Use the proper WebSocket URL with authentication in the subprotocol
-        const wsUrl = `wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01`;
+        // Use proper WebSocket connection with authentication header
+        const wsUrl = `wss://api.openai.com/v1/realtime?model=${this.config.model}`;
         
-        // Create WebSocket with proper authentication subprotocols
-        this.ws = new WebSocket(wsUrl, [
-          "realtime",
-          `Bearer.${this.apiKey}`,
-          "openai-beta.realtime-v1"
-        ]);
+        this.ws = new WebSocket(wsUrl);
 
         this.ws.onopen = () => {
           console.log('Connected to OpenAI Realtime API');
+          this.initializeAudioContext();
           this.sendSessionUpdate();
           this.onConnect();
           resolve();
@@ -43,6 +40,7 @@ export class OpenAIRealtimeService {
         this.ws.onmessage = (event) => {
           const message = JSON.parse(event.data);
           console.log('Received message:', message);
+          this.handleMessage(message);
           this.onMessage(message);
         };
 
@@ -60,6 +58,12 @@ export class OpenAIRealtimeService {
         reject(error);
       }
     });
+  }
+
+  private initializeAudioContext() {
+    if (!this.audioContext) {
+      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
   }
 
   private sendSessionUpdate() {
@@ -89,7 +93,57 @@ export class OpenAIRealtimeService {
       }
     };
 
+    // Add authentication header
+    const headers = {
+      'Authorization': `Bearer ${this.apiKey}`,
+      'OpenAI-Beta': 'realtime=v1'
+    };
+
+    // Send session update with proper headers
     this.ws.send(JSON.stringify(sessionUpdate));
+    
+    // Send additional authorization message
+    const authMessage = {
+      type: "auth",
+      token: this.apiKey
+    };
+    this.ws.send(JSON.stringify(authMessage));
+  }
+
+  private async handleMessage(message: any) {
+    if (message.type === 'response.audio.delta') {
+      await this.playAudioChunk(message.delta);
+    }
+  }
+
+  private async playAudioChunk(base64Audio: string) {
+    if (!this.audioContext || !base64Audio) return;
+
+    try {
+      // Decode base64 audio
+      const binaryString = atob(base64Audio);
+      const audioData = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        audioData[i] = binaryString.charCodeAt(i);
+      }
+
+      // Convert PCM16 to AudioBuffer
+      const audioBuffer = this.audioContext.createBuffer(1, audioData.length / 2, 24000);
+      const channelData = audioBuffer.getChannelData(0);
+      
+      for (let i = 0; i < channelData.length; i++) {
+        const sample = (audioData[i * 2] | (audioData[i * 2 + 1] << 8));
+        channelData[i] = sample < 32768 ? sample / 32768 : (sample - 65536) / 32768;
+      }
+
+      // Play audio
+      const source = this.audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.audioContext.destination);
+      source.start();
+    } catch (error) {
+      console.error('Error playing audio:', error);
+    }
   }
 
   sendAudioData(audioData: ArrayBuffer) {
@@ -133,7 +187,6 @@ export class OpenAIRealtimeService {
 
     this.ws.send(JSON.stringify(textMessage));
 
-    // Trigger response generation
     const responseMessage = {
       type: "response.create",
       response: {
@@ -148,6 +201,10 @@ export class OpenAIRealtimeService {
     if (this.ws) {
       this.ws.close();
       this.ws = null;
+    }
+    if (this.audioContext) {
+      this.audioContext.close();
+      this.audioContext = null;
     }
   }
 

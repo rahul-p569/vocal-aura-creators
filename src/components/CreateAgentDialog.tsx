@@ -1,7 +1,7 @@
 
 import { useState } from "react";
 import { Brain, Upload, Phone } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { Agent } from "@/types/agent";
+import VoicePreview from "./VoicePreview";
 
 interface CreateAgentDialogProps {
   isOpen: boolean;
@@ -35,6 +36,15 @@ const CreateAgentDialog = ({ isOpen, onClose, onCreateAgent }: CreateAgentDialog
     phoneNumber: "",
   });
   const [knowledgeFiles, setKnowledgeFiles] = useState<string[]>([]);
+
+  const getApiKey = () => {
+    const settings = localStorage.getItem("voiceai_settings");
+    if (settings) {
+      const parsed = JSON.parse(settings);
+      return parsed.apiKeys?.openai;
+    }
+    return null;
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,6 +90,9 @@ const CreateAgentDialog = ({ isOpen, onClose, onCreateAgent }: CreateAgentDialog
             <Brain className="w-6 h-6 text-blue-400" />
             <span>Create New Voice Agent</span>
           </DialogTitle>
+          <DialogDescription className="text-gray-400">
+            Configure your AI voice agent with custom voice, personality, and capabilities.
+          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -124,8 +137,17 @@ const CreateAgentDialog = ({ isOpen, onClose, onCreateAgent }: CreateAgentDialog
                   }`}
                   onClick={() => setFormData(prev => ({ ...prev, voice: voice.id }))}
                 >
-                  <div className="text-white font-medium">{voice.name}</div>
-                  <div className="text-gray-400 text-sm">{voice.description}</div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-white font-medium">{voice.name}</div>
+                      <div className="text-gray-400 text-sm">{voice.description}</div>
+                    </div>
+                    <VoicePreview 
+                      voice={voice.id} 
+                      voiceName={voice.name}
+                      apiKey={getApiKey()}
+                    />
+                  </div>
                 </Card>
               ))}
             </div>

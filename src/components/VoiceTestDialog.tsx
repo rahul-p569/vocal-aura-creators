@@ -1,12 +1,22 @@
 
 import { useState, useRef, useEffect } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Volume2 } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Slider } from "@/components/ui/slider";
 import { Agent } from "@/types/agent";
 import { useToast } from "@/hooks/use-toast";
 import { OpenAIRealtimeService } from "@/services/openaiService";
+import ConversationDisplay from "./ConversationDisplay";
+
+interface ConversationMessage {
+  id: string;
+  type: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  isComplete: boolean;
+}
 
 interface VoiceTestDialogProps {
   agent: Agent;
@@ -18,14 +28,18 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [transcript, setTranscript] = useState<string[]>([]);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [connectionTime, setConnectionTime] = useState(0);
+  const [volume, setVolume] = useState(50);
+  const [isUserSpeaking, setIsUserSpeaking] = useState(false);
+  const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
   const { toast } = useToast();
 
   const intervalRef = useRef<NodeJS.Timeout>();
   const realtimeServiceRef = useRef<OpenAIRealtimeService | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  const currentAssistantMessageRef = useRef<string>('');
 
   useEffect(() => {
     if (isConnected && !intervalRef.current) {
@@ -59,11 +73,31 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
     return null;
   };
 
+  const addMessage = (type: 'user' | 'assistant', content: string, isComplete: boolean = true) => {
+    const messageId = `${type}_${Date.now()}_${Math.random()}`;
+    setMessages(prev => [...prev, {
+      id: messageId,
+      type,
+      content,
+      timestamp: new Date(),
+      isComplete
+    }]);
+    return messageId;
+  };
+
+  const updateMessage = (messageId: string, content: string, isComplete: boolean = false) => {
+    setMessages(prev => prev.map(msg => 
+      msg.id === messageId 
+        ? { ...msg, content, isComplete }
+        : msg
+    ));
+  };
+
   const setupMediaRecorder = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
-          sampleRate: 16000,
+          sampleRate: 24000,
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
@@ -84,7 +118,7 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
         }
       };
 
-      mediaRecorder.start(100); // Send audio chunks every 100ms
+      mediaRecorder.start(100);
       mediaRecorderRef.current = mediaRecorder;
 
     } catch (error) {
@@ -111,7 +145,6 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
     setIsLoading(true);
     
     try {
-      // Initialize OpenAI Realtime Service
       const realtimeService = new OpenAIRealtimeService({
         apiKey,
         model: "gpt-4o-realtime-preview-2024-10-01",
@@ -122,7 +155,7 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
       realtimeService.onConnected(() => {
         setIsConnected(true);
         setConnectionTime(0);
-        setTranscript([`${agent.name}: Hello! I'm ${agent.name}. How can I help you today?`]);
+        addMessage('assistant', `Hello! I'm ${agent.name}. How can I help you today?`);
         setupMediaRecorder();
       });
 
@@ -130,34 +163,49 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
         console.log('Received message:', message);
         
         if (message.type === 'response.audio_transcript.delta') {
-          // Handle audio transcript
           const text = message.delta;
           if (text) {
-            setTranscript(prev => {
+            currentAssistantMessageRef.current += text;
+            // Update or create assistant message
+            setMessages(prev => {
               const lastMessage = prev[prev.length - 1];
-              if (lastMessage && lastMessage.startsWith(`${agent.name}:`)) {
-                // Update the last agent message
-                const updated = [...prev];
-                updated[updated.length - 1] = lastMessage + text;
-                return updated;
+              if (lastMessage && lastMessage.type === 'assistant' && !lastMessage.isComplete) {
+                return prev.map((msg, index) => 
+                  index === prev.length - 1 
+                    ? { ...msg, content: currentAssistantMessageRef.current }
+                    : msg
+                );
               } else {
-                // Add new agent message
-                return [...prev, `${agent.name}: ${text}`];
+                return [...prev, {
+                  id: `assistant_${Date.now()}`,
+                  type: 'assistant',
+                  content: currentAssistantMessageRef.current,
+                  timestamp: new Date(),
+                  isComplete: false
+                }];
               }
             });
           }
+        } else if (message.type === 'response.audio_transcript.done') {
+          // Mark assistant message as complete
+          setMessages(prev => prev.map((msg, index) => 
+            index === prev.length - 1 && msg.type === 'assistant'
+              ? { ...msg, isComplete: true }
+              : msg
+          ));
+          currentAssistantMessageRef.current = '';
+          setIsAssistantSpeaking(false);
         } else if (message.type === 'input_audio_buffer.speech_started') {
-          // User started speaking
-          console.log('User started speaking');
+          setIsUserSpeaking(true);
         } else if (message.type === 'input_audio_buffer.speech_stopped') {
-          // User stopped speaking
-          console.log('User stopped speaking');
+          setIsUserSpeaking(false);
         } else if (message.type === 'conversation.item.input_audio_transcription.completed') {
-          // User speech transcription completed
           const transcript = message.transcript;
           if (transcript) {
-            setTranscript(prev => [...prev, `You: ${transcript}`]);
+            addMessage('user', transcript);
           }
+        } else if (message.type === 'response.audio.delta') {
+          setIsAssistantSpeaking(true);
         }
       });
 
@@ -173,6 +221,8 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
 
       realtimeService.onDisconnected(() => {
         setIsConnected(false);
+        setIsUserSpeaking(false);
+        setIsAssistantSpeaking(false);
         if (mediaRecorderRef.current) {
           mediaRecorderRef.current.stop();
         }
@@ -219,7 +269,10 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
 
     setIsConnected(false);
     setConnectionTime(0);
-    setTranscript([]);
+    setMessages([]);
+    setIsUserSpeaking(false);
+    setIsAssistantSpeaking(false);
+    currentAssistantMessageRef.current = '';
     
     toast({
       title: "Disconnected",
@@ -237,15 +290,11 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
     }
   };
 
-  const simulateUserInput = () => {
-    if (realtimeServiceRef.current) {
-      const userMessage = "Hi there, I'd like some information about your services.";
-      realtimeServiceRef.current.sendTextMessage(userMessage);
-      setTranscript(prev => [...prev, `You: ${userMessage}`]);
-    }
+  const handleVolumeChange = (value: number[]) => {
+    setVolume(value[0]);
+    // TODO: Implement actual volume control for audio output
   };
 
-  // Cleanup on dialog close
   useEffect(() => {
     if (!isOpen && isConnected) {
       handleDisconnect();
@@ -254,12 +303,15 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="bg-gray-900 border-gray-700 text-white max-w-2xl">
+      <DialogContent className="bg-gray-900 border-gray-700 text-white max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center space-x-2 text-xl">
             <Phone className="w-6 h-6 text-blue-400" />
             <span>Voice Test - {agent.name}</span>
           </DialogTitle>
+          <DialogDescription className="text-gray-400">
+            Test your voice agent with real-time speech-to-speech conversation using OpenAI Realtime API.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
@@ -280,37 +332,34 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
                 )}
               </div>
               
-              <div className="flex items-center space-x-2">
-                <Volume2 className="w-4 h-4 text-gray-400" />
-                <span className="text-sm text-gray-400">Voice: {agent.voice}</span>
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <Volume2 className="w-4 h-4 text-gray-400" />
+                  <span className="text-sm text-gray-400">Voice: {agent.voice}</span>
+                </div>
+                {isConnected && (
+                  <div className="flex items-center space-x-2">
+                    <VolumeX className="w-4 h-4 text-gray-400" />
+                    <Slider
+                      value={[volume]}
+                      onValueChange={handleVolumeChange}
+                      max={100}
+                      step={1}
+                      className="w-20"
+                    />
+                    <span className="text-sm text-gray-400 w-8">{volume}%</span>
+                  </div>
+                )}
               </div>
             </div>
           </Card>
 
-          {/* Conversation */}
-          <Card className="bg-gray-800/50 border-gray-700 p-4">
-            <h3 className="text-white font-medium mb-3">Real-time Conversation</h3>
-            <div className="space-y-3 max-h-60 overflow-y-auto">
-              {transcript.length === 0 ? (
-                <div className="text-gray-400 text-center py-8">
-                  Start a voice test to see the conversation here
-                </div>
-              ) : (
-                transcript.map((message, index) => (
-                  <div
-                    key={index}
-                    className={`p-3 rounded ${
-                      message.startsWith('You:')
-                        ? "bg-blue-500/20 text-blue-200"
-                        : "bg-purple-500/20 text-purple-200"
-                    }`}
-                  >
-                    {message}
-                  </div>
-                ))
-              )}
-            </div>
-          </Card>
+          {/* Conversation Display */}
+          <ConversationDisplay 
+            messages={messages}
+            isUserSpeaking={isUserSpeaking}
+            isAssistantSpeaking={isAssistantSpeaking}
+          />
 
           {/* Controls */}
           <div className="flex space-x-3">
@@ -321,7 +370,7 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
                 className="flex-1 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
               >
                 <Phone className="w-4 h-4 mr-2" />
-                {isLoading ? "Connecting..." : "Start Real Voice Test"}
+                {isLoading ? "Connecting..." : "Start Voice Conversation"}
               </Button>
             ) : (
               <>
@@ -343,14 +392,7 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
                   }`}
                 >
                   {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                </Button>
-
-                <Button
-                  onClick={simulateUserInput}
-                  variant="outline"
-                  className="border-blue-600 text-blue-400 hover:bg-blue-600/10"
-                >
-                  Send Text
+                  {isMuted ? "Unmute" : "Mute"}
                 </Button>
               </>
             )}
@@ -358,8 +400,9 @@ const VoiceTestDialog = ({ agent, isOpen, onClose }: VoiceTestDialogProps) => {
 
           {/* Note */}
           <div className="text-sm text-gray-400 bg-gray-800/30 p-3 rounded">
-            <strong>Live OpenAI Integration:</strong> This connects to the OpenAI Realtime API for actual voice conversations. 
-            Make sure your browser allows microphone access and your API key is properly configured.
+            <strong>Real-time Speech Conversation:</strong> This connects directly to OpenAI's Realtime API for 
+            natural voice conversations. Speak naturally and the AI will respond with voice and text transcription.
+            Make sure your browser allows microphone access.
           </div>
         </div>
       </DialogContent>
