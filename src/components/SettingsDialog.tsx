@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Settings, Key, Phone, Save } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -17,23 +17,40 @@ interface SettingsDialogProps {
 
 const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
   const [apiKeys, setApiKeys] = useState({
-    openai: "",
+    openai: "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",
     plivo: "",
     twilio: "",
   });
   const [webhookUrl, setWebhookUrl] = useState("");
   const { toast } = useToast();
 
+  useEffect(() => {
+    // Load saved settings when dialog opens
+    if (isOpen) {
+      const savedSettings = localStorage.getItem("voiceai_settings");
+      if (savedSettings) {
+        const settings = JSON.parse(savedSettings);
+        setApiKeys(settings.apiKeys || {
+          openai: "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",
+          plivo: "",
+          twilio: "",
+        });
+        setWebhookUrl(settings.webhookUrl || "");
+      }
+    }
+  }, [isOpen]);
+
   const handleSave = () => {
-    // In a real app, these would be saved securely
-    localStorage.setItem("voiceai_settings", JSON.stringify({
+    // Save settings to localStorage
+    const settings = {
       apiKeys,
       webhookUrl,
-    }));
+    };
+    localStorage.setItem("voiceai_settings", JSON.stringify(settings));
     
     toast({
       title: "Settings Saved",
-      description: "Your settings have been saved successfully.",
+      description: "Your API keys and settings have been saved successfully.",
     });
     
     onClose();
