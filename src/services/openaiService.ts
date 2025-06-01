@@ -24,10 +24,14 @@ export class OpenAIRealtimeService {
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        // Use proper WebSocket connection with authentication header
+        // Create WebSocket connection with proper authentication
         const wsUrl = `wss://api.openai.com/v1/realtime?model=${this.config.model}`;
         
-        this.ws = new WebSocket(wsUrl);
+        this.ws = new WebSocket(wsUrl, [
+          "realtime", 
+          `Bearer.${this.apiKey}`,
+          "openai-beta.realtime-v1"
+        ]);
 
         this.ws.onopen = () => {
           console.log('Connected to OpenAI Realtime API');
@@ -93,21 +97,7 @@ export class OpenAIRealtimeService {
       }
     };
 
-    // Add authentication header
-    const headers = {
-      'Authorization': `Bearer ${this.apiKey}`,
-      'OpenAI-Beta': 'realtime=v1'
-    };
-
-    // Send session update with proper headers
     this.ws.send(JSON.stringify(sessionUpdate));
-    
-    // Send additional authorization message
-    const authMessage = {
-      type: "auth",
-      token: this.apiKey
-    };
-    this.ws.send(JSON.stringify(authMessage));
   }
 
   private async handleMessage(message: any) {
